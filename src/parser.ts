@@ -471,7 +471,8 @@ export function parseHtmlToSnapshot(html: string): Snapshot | null {
   const outOfServiceDate = parseDate(extractTableValue($, 'Out of Service Date:'));
   const stateCarrierId = extractTableValue($, 'State Carrier ID Number:');
   const mcs150FormDate = parseDate(extractTableValue($, 'MCS-150 Form Date:'));
-  const operatingAuthorityStatus = extractTableValue($, 'Operating Authority Status:');
+  const rawAuth = extractTableValue($, 'Operating Authority Status:');
+  const operatingAuthorityStatus = rawAuth ? rawAuth.split('*')[0].trim() : null;
 
   // Extract MCS-150 Mileage
   const mileageText = extractTableValue($, 'MCS-150 Mileage');

@@ -18,6 +18,11 @@ import {
   INPUT_FILE,
   TEST_MODE,
   TEST_LIMIT,
+  PROXY_URL,
+  PROXY_USER_BASE,
+  PROXY_PASS,
+  MAX_RETRIES,
+  REQUEST_TIMEOUT,
 } from './config';
 import type { Snapshot } from './types/carrier.types';
 
@@ -95,37 +100,73 @@ let dbWriterStop: (() => void) | null = null;
 async function dbWriterWorker(pool: Pool): Promise<void> {
   console.log('DB writer worker started');
   
+  let lastFlushTime = Date.now();
+  // In test mode, flush more frequently for faster feedback
+  const FLUSH_INTERVAL_MS = TEST_MODE ? 2000 : 5000; // 2 seconds in test mode, 5 seconds otherwise
+  
   // Flush batch function
-  const flushBatch = async () => {
+  const flushBatch = async (reason: string = 'size threshold') => {
     if (writeBatch.length > 0) {
+      const batchSize = writeBatch.length;
       try {
+        console.log(`DB writer: Flushing ${batchSize} records (reason: ${reason})...`);
         const count = await bulkInsertBatch(pool, writeBatch);
         stats.saved += count;
-        console.log(`DB writer: Flushed ${writeBatch.length} records to DB (Total saved: ${stats.saved})`);
+        console.log(`DB writer: ✓ Successfully saved ${count} records to DB (Total saved: ${stats.saved})`);
         writeBatch = [];
+        lastFlushTime = Date.now();
       } catch (error) {
         console.log(`DB WRITE ERROR: ${error}`);
+        console.log(`DB WRITE ERROR: Failed to save ${batchSize} records`);
+        if (error instanceof Error) {
+          console.log(`DB WRITE ERROR: ${error.message}`);
+          if (error.stack) {
+            console.log(`DB WRITE ERROR: Stack: ${error.stack.split('\n').slice(0, 5).join('\n')}`);
+          }
+        }
         stats.errors += 1;
         writeBatch = []; // Clear batch to avoid retrying same data
+        lastFlushTime = Date.now();
       }
     }
   };
 
   // Periodically check and flush batch
   const flushInterval = setInterval(async () => {
+    const now = Date.now();
+    const timeSinceLastFlush = now - lastFlushTime;
+    
+    // Flush if batch is full OR if it's been more than FLUSH_INTERVAL_MS since last flush
     if (writeBatch.length >= BATCH_SIZE) {
-      await flushBatch();
+      await flushBatch('batch size reached');
+    } else if (writeBatch.length > 0 && timeSinceLastFlush >= FLUSH_INTERVAL_MS) {
+      await flushBatch('time interval');
     }
   }, 1000); // Check every second
+
+  // Handle graceful shutdown
+  const handleShutdown = async () => {
+    clearInterval(flushInterval);
+    await flushBatch('shutdown'); // Final flush
+    console.log('DB writer worker stopped');
+  };
 
   // Return a promise that resolves when we should stop
   return new Promise<void>((resolve) => {
     dbWriterStop = async () => {
-      clearInterval(flushInterval);
-      await flushBatch(); // Final flush
-      console.log('DB writer worker stopped');
+      await handleShutdown();
       resolve();
     };
+    
+    // Also handle process termination
+    process.on('SIGINT', async () => {
+      await handleShutdown();
+      resolve();
+    });
+    process.on('SIGTERM', async () => {
+      await handleShutdown();
+      resolve();
+    });
   });
 }
 
@@ -142,15 +183,20 @@ async function processUsdot(usdot: string): Promise<void> {
         // Add to write batch (will be flushed by DB writer)
         writeBatch.push(snapshot);
         stats.scraped += 1;
+        
+        if (TEST_MODE && stats.scraped <= 10) {
+          console.log(`[PARSER] USDOT ${usdot}: Parsed successfully, added to batch (batch size: ${writeBatch.length})`);
+        }
+        
         if (stats.scraped % 100 === 0) {
           console.log(
-            `Scraped ${usdot} (Total: ${stats.scraped}, Failed: ${stats.failed}, Saved: ${stats.saved})`
+            `Scraped ${usdot} (Total: ${stats.scraped}, Failed: ${stats.failed}, Saved: ${stats.saved}, Batch: ${writeBatch.length})`
           );
         }
       } else {
         stats.failed += 1;
-        if (TEST_MODE && stats.failed <= 5) {
-          console.log(`Failed to parse ${usdot}`);
+        if (TEST_MODE) {
+          console.log(`[PARSER] USDOT ${usdot}: Failed to parse - snapshot is null or missing usdot_number`);
         }
       }
     } else {
@@ -164,7 +210,10 @@ async function processUsdot(usdot: string): Promise<void> {
   } catch (error) {
     stats.failed += 1;
     stats.errors += 1;
-    console.log(`Error processing ${usdot}: ${error}`);
+    console.log(`[ERROR] Error processing ${usdot}: ${error}`);
+    if (error instanceof Error && error.stack) {
+      console.log(`[ERROR] Stack: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
+    }
   }
 }
 
@@ -188,6 +237,17 @@ async function main(): Promise<void> {
   console.log('FMCSA High-Throughput Async Scraper (TypeScript)');
   if (TEST_MODE) {
     console.log('*** TEST MODE ENABLED (No Proxy, Low Concurrency) ***');
+  }
+  console.log('='.repeat(60));
+  console.log('Network Configuration:');
+  console.log(`  Request Timeout: ${REQUEST_TIMEOUT}ms`);
+  console.log(`  Max Retries: ${MAX_RETRIES}`);
+  console.log(`  Proxy Enabled: ${!TEST_MODE && PROXY_URL && PROXY_USER_BASE && PROXY_PASS ? 'Yes' : 'No'}`);
+  if (PROXY_URL) {
+    console.log(`  Proxy URL: ${PROXY_URL}`);
+    console.log(`  Proxy User Base: ${PROXY_USER_BASE ? PROXY_USER_BASE.substring(0, 20) + '...' : 'Not set'}`);
+  } else {
+    console.log(`  Proxy URL: Not configured`);
   }
   console.log('='.repeat(60));
 

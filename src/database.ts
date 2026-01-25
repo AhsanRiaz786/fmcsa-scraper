@@ -46,9 +46,8 @@ export async function bulkInsertSnapshots(
       mailing_address_street, mailing_address_city, mailing_address_state, mailing_address_zip, mailing_address_country,
       phone, duns_number, power_units, non_cmv_units, drivers,
       operation_classification, carrier_operation, cargo_carried,
-      us_inspection_summary_24mo, canadian_inspection_summary_24mo, carrier_safety_rating,
-      updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+      us_inspection_summary_24mo, canadian_inspection_summary_24mo, carrier_safety_rating
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
     ON CONFLICT (usdot_number) DO UPDATE SET
       entity_type = EXCLUDED.entity_type,
       usdot_status = EXCLUDED.usdot_status,

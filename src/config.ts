@@ -42,7 +42,7 @@ export const TEST_MODE = process.env.TEST_MODE?.toLowerCase() === 'true';
 // Performance settings
 // In test mode, force lower concurrency (ignore CONCURRENCY env var)
 export const CONCURRENCY = TEST_MODE
-  ? 10  // Always use 10 in test mode
+  ? 1  // Always use 10 in test mode
   : parseInt(process.env.CONCURRENCY || '200', 10);
 
 export const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '1000', 10);
