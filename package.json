@@ -1,0 +1,37 @@
+{
+  "name": "fmcsa-scraper",
+  "version": "1.0.0",
+  "description": "High-throughput async scraper for FMCSA SAFER database",
+  "main": "dist/orchestrator.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/orchestrator.js",
+    "dev": "ts-node src/orchestrator.ts",
+    "test": "ts-node src/orchestrator.ts"
+  },
+  "keywords": [
+    "fmcsa",
+    "scraper",
+    "typescript"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "pg": "^8.11.3",
+    "dotenv": "^16.3.1",
+    "p-queue": "^8.0.1",
+    "csv-parser": "^3.0.0",
+    "date-fns": "^3.0.0",
+    "https-proxy-agent": "^7.0.2",
+    "p-retry": "^6.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.10.0",
+    "@types/pg": "^8.10.9",
+    "@types/cheerio": "^0.22.35"
+  }
+}
