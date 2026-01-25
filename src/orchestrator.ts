@@ -289,13 +289,13 @@ async function main(): Promise<void> {
     console.log(`Feeding ${todoList.length} jobs to queue...`);
     console.log(`Starting ${CONCURRENCY} scraper workers${TEST_MODE ? ' (test mode)' : ''}...`);
 
-    // Process all jobs through the queue
-    const jobPromises = todoList.map((usdot) =>
-      jobQueue.add(() => processUsdot(usdot))
-    );
+    // Add all jobs without collecting promises (avoids "Too many elements" in Promise.all)
+    for (const usdot of todoList) {
+      jobQueue.add(() => processUsdot(usdot));
+    }
 
-    // Wait for all jobs to complete
-    await Promise.all(jobPromises);
+    // Wait for queue to drain
+    await jobQueue.onIdle();
     console.log('All scraping tasks completed.');
 
     // Stop progress monitor
