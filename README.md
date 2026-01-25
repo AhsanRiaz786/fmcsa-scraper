@@ -1,4 +1,4 @@
-# FMCSA High-Throughput Async Scraper
+# FMCSA High-Throughput Async Scraper (TypeScript/Node.js)
 
 High-performance async scraper for FMCSA SAFER database with support for 100+ requests per second.
 
@@ -14,7 +14,7 @@ The system uses a **3-tier async producer-consumer pattern**:
 
 1. Install dependencies:
 ```bash
-pip install -r requirements.txt
+npm install
 ```
 
 2. Configure `.env` file:
@@ -27,53 +27,36 @@ DB_PORT=5432
 DB_AVAILABLE=True
 
 PROXY_URL=your_proxy_url
-PROXY_USER_BASE=your_user_base
+PROXY_USER_BASE=your_proxy_user_base
 PROXY_PASS=your_proxy_password
 
 CONCURRENCY=200
 BATCH_SIZE=1000
 MAX_RETRIES=3
 REQUEST_TIMEOUT=15
+TEST_MODE=False
+TEST_LIMIT=100
 ```
 
-3. Ensure PostgreSQL database is set up with the schema (see plan for SQL schema)
+3. Set up PostgreSQL database:
+```bash
+psql -U your_user -d fmcsa_safer -f src/schema.sql
+```
 
 ## Usage
 
 ### Production (High-Throughput)
 
-Run the async orchestrator:
+Build and run:
 ```bash
-python orchestrator.py
+npm run build
+npm start
 ```
 
-### Test Mode (No Proxy, Low Concurrency)
-
-For testing without proxies and with lower concurrency, you have two options:
-
-**Option 1: Command-line flag (recommended for quick testing)**
+Or run directly with ts-node:
 ```bash
-python orchestrator.py --test
-# or
-python orchestrator.py -t
+npm run dev
 ```
-
-**Option 2: Environment variable**
-1. Set `TEST_MODE=True` in `.env`:
-```env
-TEST_MODE=True
-```
-
-2. Run the orchestrator:
-```bash
-python orchestrator.py
-```
-
-Test mode will:
-- Skip proxy usage (direct connections to FMCSA)
-- Use concurrency of 10 (instead of 200) - can be overridden with CONCURRENCY env var
-- Still save to database (if configured)
-- Display "TEST MODE ENABLED" banner when starting
 
 This will:
 - Load USDOT numbers from `dot_numbers.csv`
@@ -82,13 +65,37 @@ This will:
 - Batch insert to database in chunks of 1000 (configurable via `BATCH_SIZE`)
 - Display progress statistics every 10 seconds
 
+### Test Mode (No Proxy, Low Concurrency)
 
+For testing without proxies and with lower concurrency:
+
+**Option 1: Command-line flag**
+```bash
+npm run dev -- --test
+# or
+npm run dev -- -t
+```
+
+**Option 2: Environment variable**
+Set in `.env`:
+```env
+TEST_MODE=True
+```
+
+Test mode will:
+- Skip proxy usage (direct connections to FMCSA)
+- Use concurrency of 10 (instead of 200)
+- Process only first N records (set via `TEST_LIMIT`, default 100)
+- Still save to database (if configured)
+- Display "TEST MODE ENABLED" banner when starting
+
+**Note:** FMCSA blocks direct connections (returns 403). Test mode without proxy will show 403 errors.
 
 ## Performance Tuning
 
 - **CONCURRENCY**: Number of concurrent scraper workers. Start with 200, increase if CPU allows.
 - **BATCH_SIZE**: Database write batch size. 1000 is optimal for most cases.
-- **REQUEST_TIMEOUT**: HTTP request timeout in seconds. 15 is recommended.
+- **REQUEST_TIMEOUT**: HTTP request timeout in milliseconds. 15000 (15s) is recommended.
 
 ## Monitoring
 
@@ -97,7 +104,6 @@ The orchestrator prints progress every 10 seconds:
 - Failed: Number of failed requests/parses
 - Saved: Number of records written to database
 - Errors: Number of errors encountered
-- Queue sizes: Current job queue and write queue sizes
 
 ## Resume Capability
 
@@ -105,16 +111,25 @@ The system automatically checks the database for existing records at startup and
 
 ## Files
 
-- `orchestrator.py` - Main async coordinator (use for production)
-- `main.py` - Legacy synchronous version (use for testing)
-- `config.py` - Configuration loader
-- `network.py` - Async HTTP client with proxy rotation
-- `parser.py` - HTML parsing logic
-- `database.py` - Batch database operations
+- `src/orchestrator.ts` - Main async coordinator (use for production)
+- `src/config.ts` - Configuration loader
+- `src/network.ts` - Async HTTP client with proxy rotation
+- `src/parser.ts` - HTML parsing logic (maps to carrier.types.ts)
+- `src/database.ts` - Batch database operations
+- `src/types/carrier.types.ts` - TypeScript type definitions
+- `src/schema.sql` - PostgreSQL schema (flattened structure)
+
+## TypeScript Types
+
+The scraper outputs data matching the exact `Snapshot` type from `carrier.types.ts`:
+- All fields match the type definitions
+- Arrays and nested objects are properly typed
+- Only non-empty inspection summaries are included (per type comments)
+- Only non-empty safety ratings are included (per type comments)
 
 ## Notes
 
-- Uses `uvloop` for enhanced performance on Linux/Mac (optional)
+- Uses `p-queue` for concurrency control
 - Proxy rotation: Each request gets a unique session ID to force IP rotation
-- Database connections: Only 1 connection used for all writes (respects 20-connection limit)
+- Database connections: Uses connection pooling (respects connection limits)
 - Error handling: Failed batches are logged, network errors are retried automatically
