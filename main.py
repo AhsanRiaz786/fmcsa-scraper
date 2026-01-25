@@ -7,8 +7,22 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import re
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DB_NAME = os.getenv("DATABASE_NAME")
+DB_USER = os.getenv("DATABASE_USER")
+DB_PASSWORD = os.getenv("DATABASE_PASSWORD")
+DB_HOST = os.getenv("DATABASE_HOST")
+DB_PORT = os.getenv("DATABASE_PORT")
+DB_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DB_AVAILABLE = os.getenv("DB_AVAILABLE") == "True"
+
+
 
 
 def clean_text(text: str) -> str:
@@ -525,20 +539,301 @@ def fetch_carrier_info(usdot_number: str) -> Dict[str, Any]:
         return {"error": f"Parsing failed: {str(e)}"}
 
 
+def save_to_database(data: Dict[str, Any], db_connection_string: Optional[str] = None) -> bool:
+    """
+    Save carrier data to PostgreSQL database.
+    
+    Args:
+        data: Parsed carrier data dictionary
+        db_connection_string: PostgreSQL connection string (or use env var DATABASE_URL)
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not DB_AVAILABLE:
+        print("Warning: psycopg2 not installed. Database save skipped.")
+        return False
+    
+    if "error" in data:
+        print(f"Error in data, skipping database save: {data['error']}")
+        return False
+    
+    # Get connection string from parameter or environment
+    conn_str = db_connection_string or os.getenv("DATABASE_URL")
+    if not conn_str:
+        print("Warning: No database connection string provided. Set DATABASE_URL env var or pass db_connection_string.")
+        return False
+    
+    try:
+        conn = psycopg2.connect(conn_str)
+        cur = conn.cursor()
+        
+        metadata = data.get("record_metadata", {})
+        identity = data.get("company_identity", {})
+        contact = data.get("contact_info", {})
+        status = data.get("operating_status", {})
+        operations = data.get("operations", {})
+        safety = data.get("safety_record", {})
+        
+        usdot = metadata.get("usdot_number")
+        if not usdot:
+            print("Error: No USDOT number in data")
+            return False
+        
+        # Parse dates
+        def parse_date(date_str):
+            if not date_str:
+                return None
+            try:
+                return datetime.strptime(date_str, "%Y-%m-%d").date()
+            except:
+                return None
+        
+        snapshot_date = parse_date(metadata.get("snapshot_date"))
+        oos_date = parse_date(status.get("out_of_service_date"))
+        mcs_date = parse_date(status.get("mcs_150_form_date"))
+        
+        # 1. Upsert main carrier record
+        cur.execute("""
+            INSERT INTO carriers (
+                usdot_number, entity_type, snapshot_date,
+                legal_name, dba_name, duns_number, phone,
+                usdot_status, operating_authority_status, out_of_service_date,
+                mcs_150_form_date, mcs_150_mileage, mcs_150_mileage_year,
+                power_units, drivers, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (usdot_number) DO UPDATE SET
+                entity_type = EXCLUDED.entity_type,
+                snapshot_date = EXCLUDED.snapshot_date,
+                legal_name = EXCLUDED.legal_name,
+                dba_name = EXCLUDED.dba_name,
+                duns_number = EXCLUDED.duns_number,
+                phone = EXCLUDED.phone,
+                usdot_status = EXCLUDED.usdot_status,
+                operating_authority_status = EXCLUDED.operating_authority_status,
+                out_of_service_date = EXCLUDED.out_of_service_date,
+                mcs_150_form_date = EXCLUDED.mcs_150_form_date,
+                mcs_150_mileage = EXCLUDED.mcs_150_mileage,
+                mcs_150_mileage_year = EXCLUDED.mcs_150_mileage_year,
+                power_units = EXCLUDED.power_units,
+                drivers = EXCLUDED.drivers,
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            usdot,
+            metadata.get("entity_type"),
+            snapshot_date,
+            identity.get("legal_name"),
+            identity.get("dba_name"),
+            identity.get("duns_number"),
+            contact.get("phone"),
+            status.get("usdot_status"),
+            status.get("operating_authority_status"),
+            oos_date,
+            mcs_date,
+            status.get("mcs_150_mileage"),
+            status.get("mcs_150_mileage_year"),
+            operations.get("fleet_size", {}).get("power_units"),
+            operations.get("fleet_size", {}).get("drivers"),
+        ))
+        
+        # 2. Upsert authority numbers (MC/MX/FF)
+        cur.execute("DELETE FROM carrier_authority_numbers WHERE usdot_number = %s", (usdot,))
+        mc_numbers = identity.get("mc_mx_ff_numbers", [])
+        if mc_numbers:
+            values = [(usdot, num) for num in mc_numbers]
+            execute_values(cur, """
+                INSERT INTO carrier_authority_numbers (usdot_number, authority_number)
+                VALUES %s
+                ON CONFLICT (usdot_number, authority_number) DO NOTHING
+            """, values)
+        
+        # 3. Upsert addresses
+        for addr_type, addr_data in [("PHYSICAL", contact.get("physical_address", {})),
+                                      ("MAILING", contact.get("mailing_address", {}))]:
+            cur.execute("""
+                INSERT INTO carrier_addresses (
+                    usdot_number, address_type, street, city, state, zip_code, country
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (usdot_number, address_type) DO UPDATE SET
+                    street = EXCLUDED.street,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    zip_code = EXCLUDED.zip_code,
+                    country = EXCLUDED.country
+            """, (
+                usdot, addr_type,
+                addr_data.get("street"),
+                addr_data.get("city"),
+                addr_data.get("state"),
+                addr_data.get("zip_code"),
+                addr_data.get("country", "US"),
+            ))
+        
+        # 4. Upsert classifications
+        cur.execute("DELETE FROM carrier_classifications WHERE usdot_number = %s", (usdot,))
+        classifications = operations.get("operation_classifications", [])
+        if classifications:
+            values = [(usdot, cls) for cls in classifications]
+            execute_values(cur, """
+                INSERT INTO carrier_classifications (usdot_number, classification)
+                VALUES %s
+                ON CONFLICT (usdot_number, classification) DO NOTHING
+            """, values)
+        
+        # 5. Upsert cargo
+        cur.execute("DELETE FROM carrier_cargo WHERE usdot_number = %s", (usdot,))
+        cargo = operations.get("cargo_carried", [])
+        if cargo:
+            values = [(usdot, c) for c in cargo]
+            execute_values(cur, """
+                INSERT INTO carrier_cargo (usdot_number, cargo_type)
+                VALUES %s
+                ON CONFLICT (usdot_number, cargo_type) DO NOTHING
+            """, values)
+        
+        # 6. Upsert inspections (US and Canada)
+        for region, insp_data in [("US", safety.get("us_inspections", {})),
+                                   ("CANADA", safety.get("canada_inspections", {}))]:
+            breakdown = insp_data.get("breakdown", {})
+            vehicle = breakdown.get("vehicle", {})
+            driver = breakdown.get("driver", {})
+            hazmat = breakdown.get("hazmat", {})
+            iep = breakdown.get("iep", {})
+            
+            cur.execute("""
+                INSERT INTO carrier_inspections (
+                    usdot_number, region,
+                    total_inspections, total_iep_inspections,
+                    vehicle_inspections, vehicle_oos, vehicle_oos_rate,
+                    driver_inspections, driver_oos, driver_oos_rate,
+                    hazmat_inspections, hazmat_oos, hazmat_oos_rate,
+                    iep_inspections, iep_oos, iep_oos_rate
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (usdot_number, region) DO UPDATE SET
+                    total_inspections = EXCLUDED.total_inspections,
+                    total_iep_inspections = EXCLUDED.total_iep_inspections,
+                    vehicle_inspections = EXCLUDED.vehicle_inspections,
+                    vehicle_oos = EXCLUDED.vehicle_oos,
+                    vehicle_oos_rate = EXCLUDED.vehicle_oos_rate,
+                    driver_inspections = EXCLUDED.driver_inspections,
+                    driver_oos = EXCLUDED.driver_oos,
+                    driver_oos_rate = EXCLUDED.driver_oos_rate,
+                    hazmat_inspections = EXCLUDED.hazmat_inspections,
+                    hazmat_oos = EXCLUDED.hazmat_oos,
+                    hazmat_oos_rate = EXCLUDED.hazmat_oos_rate,
+                    iep_inspections = EXCLUDED.iep_inspections,
+                    iep_oos = EXCLUDED.iep_oos,
+                    iep_oos_rate = EXCLUDED.iep_oos_rate
+            """, (
+                usdot, region,
+                insp_data.get("total_inspections", 0),
+                insp_data.get("total_iep_inspections", 0) if region == "US" else 0,
+                vehicle.get("inspections", 0),
+                vehicle.get("out_of_service", 0),
+                vehicle.get("out_of_service_rate_pct"),
+                driver.get("inspections", 0),
+                driver.get("out_of_service", 0),
+                driver.get("out_of_service_rate_pct"),
+                hazmat.get("inspections", 0) if region == "US" else 0,
+                hazmat.get("out_of_service", 0) if region == "US" else 0,
+                hazmat.get("out_of_service_rate_pct") if region == "US" else None,
+                iep.get("inspections", 0) if region == "US" else 0,
+                iep.get("out_of_service", 0) if region == "US" else 0,
+                iep.get("out_of_service_rate_pct") if region == "US" else None,
+            ))
+        
+        # 7. Upsert crashes (US and Canada)
+        for region, crash_data in [("US", safety.get("us_crashes", {})),
+                                    ("CANADA", safety.get("canada_crashes", {}))]:
+            cur.execute("""
+                INSERT INTO carrier_crashes (
+                    usdot_number, region, fatal, injury, tow, total
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (usdot_number, region) DO UPDATE SET
+                    fatal = EXCLUDED.fatal,
+                    injury = EXCLUDED.injury,
+                    tow = EXCLUDED.tow,
+                    total = EXCLUDED.total
+            """, (
+                usdot, region,
+                crash_data.get("fatal", 0),
+                crash_data.get("injury", 0),
+                crash_data.get("tow", 0),
+                crash_data.get("total", 0),
+            ))
+        
+        # 8. Upsert safety rating
+        rating_data = safety.get("safety_rating", {})
+        rating_date = parse_date(rating_data.get("rating_date"))
+        review_date = parse_date(rating_data.get("review_date"))
+        
+        cur.execute("""
+            INSERT INTO carrier_safety_ratings (
+                usdot_number, rating, rating_date, review_date, rating_type
+            ) VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (usdot_number) DO UPDATE SET
+                rating = EXCLUDED.rating,
+                rating_date = EXCLUDED.rating_date,
+                review_date = EXCLUDED.review_date,
+                rating_type = EXCLUDED.rating_type
+        """, (
+            usdot,
+            rating_data.get("rating"),
+            rating_date,
+            review_date,
+            rating_data.get("type"),
+        ))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        print(f"✓ Successfully saved carrier {usdot} to database")
+        return True
+        
+    except psycopg2.Error as e:
+        print(f"Database error: {e}")
+        if 'conn' in locals():
+            conn.rollback()
+            conn.close()
+        return False
+    except Exception as e:
+        print(f"Error saving to database: {e}")
+        if 'conn' in locals():
+            conn.rollback()
+            conn.close()
+        return False
+
+
 def main():
     """Main function to run the scraper."""
     import sys
     
     usdot_number = "4187979"
+    save_to_db = False
     
+    # Parse command line arguments
     if len(sys.argv) > 1:
         usdot_number = sys.argv[1]
+    if len(sys.argv) > 2 and sys.argv[2].lower() in ('--save', '--save-db', '-s'):
+        save_to_db = True
     
     print(f"Fetching information for USDOT: {usdot_number}")
     
     result = fetch_carrier_info(usdot_number)
     
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return result
+    
     print(json.dumps(result, indent=2, ensure_ascii=False))
+    
+    if save_to_db:
+        save_to_database(result)
     
     return result
 
