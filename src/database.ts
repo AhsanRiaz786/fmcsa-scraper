@@ -4,12 +4,9 @@
  */
 
 import { Pool, PoolClient } from 'pg';
-import { DB_CONFIG, BATCH_SIZE } from './config';
+import { DB_CONFIG } from './config';
 import type { Snapshot } from './types/carrier.types';
 
-/**
- * Parse date to PostgreSQL DATE format (YYYY-MM-DD string)
- */
 function formatDateForDB(date: Date | null | undefined): string | null {
   if (!date) return null;
   try {
@@ -20,6 +17,13 @@ function formatDateForDB(date: Date | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+/** Truncate string to maxLen for VARCHAR columns. Returns null if input is null/empty. */
+function truncate(s: string | null | undefined, maxLen: number): string | null {
+  if (s == null || s === '') return null;
+  const t = String(s).trim();
+  return t === '' ? null : t.length > maxLen ? t.slice(0, maxLen) : t;
 }
 
 /**
@@ -86,41 +90,41 @@ export async function bulkInsertSnapshots(
       updated_at = CURRENT_TIMESTAMP
   `;
 
-  // Execute each record individually (pg handles batching efficiently)
   let count = 0;
   for (const record of records) {
-    if (!record.usdot_number) continue;
+    const usdot = record.usdot_number != null ? String(record.usdot_number).trim() : '';
+    if (!usdot) continue;
 
     const values = [
-      record.usdot_number,
-      record.entity_type || null,
-      record.usdot_status || null,
+      truncate(usdot, 50) ?? usdot,
+      truncate(record.entity_type, 50),
+      truncate(record.usdot_status, 50),
       formatDateForDB(record.out_of_service_date),
-      record.state_carrier_id_number || null,
+      truncate(record.state_carrier_id_number, 50),
       formatDateForDB(record.mcs_150_form_date),
-      record.mcs_150_mileage_year || null,
-      record.mcs_150_mileage || null,
-      record.operating_authority_status || null,
-      record.mc_number || null,
-      record.mx_number || null,
-      record.ff_number || null,
-      record.legal_name || null,
-      record.dba_name || null,
-      record.physical_address?.street || null,
-      record.physical_address?.city || null,
-      record.physical_address?.state || null,
-      record.physical_address?.zip || null,
-      record.physical_address?.country || null,
-      record.mailing_address?.street || null,
-      record.mailing_address?.city || null,
-      record.mailing_address?.state || null,
-      record.mailing_address?.zip || null,
-      record.mailing_address?.country || null,
-      record.phone || null,
-      record.duns_number || null,
-      record.power_units || null,
-      record.non_cmv_units || null,
-      record.drivers || null,
+      record.mcs_150_mileage_year ?? null,
+      record.mcs_150_mileage ?? null,
+      record.operating_authority_status ?? null,
+      truncate(record.mc_number, 50),
+      truncate(record.mx_number, 50),
+      truncate(record.ff_number, 50),
+      record.legal_name ?? null,
+      record.dba_name ?? null,
+      record.physical_address?.street ?? null,
+      truncate(record.physical_address?.city, 100),
+      truncate(record.physical_address?.state, 50),
+      truncate(record.physical_address?.zip, 20),
+      truncate(record.physical_address?.country, 50),
+      record.mailing_address?.street ?? null,
+      truncate(record.mailing_address?.city, 100),
+      truncate(record.mailing_address?.state, 50),
+      truncate(record.mailing_address?.zip, 20),
+      truncate(record.mailing_address?.country, 50),
+      truncate(record.phone, 50),
+      truncate(record.duns_number, 50),
+      record.power_units ?? null,
+      record.non_cmv_units ?? null,
+      record.drivers ?? null,
       record.operation_classification ? JSON.stringify(record.operation_classification) : null,
       record.carrier_operation ? JSON.stringify(record.carrier_operation) : null,
       record.cargo_carried ? JSON.stringify(record.cargo_carried) : null,
@@ -133,8 +137,8 @@ export async function bulkInsertSnapshots(
       await client.query(query, values);
       count++;
     } catch (error) {
-      console.log(`Error inserting record ${record.usdot_number}: ${error}`);
-      // Continue with next record
+      console.log(`Error inserting record ${usdot}: ${error}`);
+      throw error; // Abort batch: rollback, do not count partial
     }
   }
 

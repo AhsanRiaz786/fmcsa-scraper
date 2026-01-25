@@ -101,53 +101,62 @@ async function dbWriterWorker(pool: Pool): Promise<void> {
   console.log('DB writer worker started');
   
   let lastFlushTime = Date.now();
-  // In test mode, flush more frequently for faster feedback
-  const FLUSH_INTERVAL_MS = TEST_MODE ? 2000 : 5000; // 2 seconds in test mode, 5 seconds otherwise
+  let flushing = false;
+  let stopped = false;
+  const FLUSH_INTERVAL_MS = TEST_MODE ? 2000 : 5000;
   
-  // Flush batch function
   const flushBatch = async (reason: string = 'size threshold') => {
-    if (writeBatch.length > 0) {
-      const batchSize = writeBatch.length;
-      try {
-        console.log(`DB writer: Flushing ${batchSize} records (reason: ${reason})...`);
-        const count = await bulkInsertBatch(pool, writeBatch);
-        stats.saved += count;
-        console.log(`DB writer: ✓ Successfully saved ${count} records to DB (Total saved: ${stats.saved})`);
-        writeBatch = [];
-        lastFlushTime = Date.now();
-      } catch (error) {
-        console.log(`DB WRITE ERROR: ${error}`);
-        console.log(`DB WRITE ERROR: Failed to save ${batchSize} records`);
-        if (error instanceof Error) {
-          console.log(`DB WRITE ERROR: ${error.message}`);
-          if (error.stack) {
-            console.log(`DB WRITE ERROR: Stack: ${error.stack.split('\n').slice(0, 5).join('\n')}`);
-          }
+    if (flushing || writeBatch.length === 0) return;
+    flushing = true;
+    // Copy and clear immediately so we never flush the same records twice
+    const toInsert = writeBatch.splice(0, writeBatch.length);
+    const batchSize = toInsert.length;
+    try {
+      console.log(`DB writer: Flushing ${batchSize} records (reason: ${reason})...`);
+      const count = await bulkInsertBatch(pool, toInsert);
+      stats.saved += count;
+      console.log(`DB writer: ✓ Successfully saved ${count} records to DB (Total saved: ${stats.saved})`);
+      lastFlushTime = Date.now();
+    } catch (error) {
+      console.log(`DB WRITE ERROR: ${error}`);
+      console.log(`DB WRITE ERROR: Failed to save ${batchSize} records`);
+      if (error instanceof Error) {
+        console.log(`DB WRITE ERROR: ${error.message}`);
+        if (error.stack) {
+          console.log(`DB WRITE ERROR: Stack: ${error.stack.split('\n').slice(0, 5).join('\n')}`);
         }
-        stats.errors += 1;
-        writeBatch = []; // Clear batch to avoid retrying same data
-        lastFlushTime = Date.now();
       }
+      stats.errors += 1;
+      lastFlushTime = Date.now();
+      // Optionally re-queue failed records? For now we drop them to avoid loops.
+    } finally {
+      flushing = false;
     }
   };
 
-  // Periodically check and flush batch
   const flushInterval = setInterval(async () => {
     const now = Date.now();
     const timeSinceLastFlush = now - lastFlushTime;
-    
-    // Flush if batch is full OR if it's been more than FLUSH_INTERVAL_MS since last flush
     if (writeBatch.length >= BATCH_SIZE) {
       await flushBatch('batch size reached');
     } else if (writeBatch.length > 0 && timeSinceLastFlush >= FLUSH_INTERVAL_MS) {
       await flushBatch('time interval');
     }
-  }, 1000); // Check every second
+  }, 1000);
 
   // Handle graceful shutdown
   const handleShutdown = async () => {
+    if (stopped) return;
+    stopped = true;
     clearInterval(flushInterval);
-    await flushBatch('shutdown'); // Final flush
+    while (true) {
+      if (flushing) {
+        await new Promise((r) => setTimeout(r, 50));
+        continue;
+      }
+      if (writeBatch.length === 0) break;
+      await flushBatch('shutdown');
+    }
     console.log('DB writer worker stopped');
   };
 

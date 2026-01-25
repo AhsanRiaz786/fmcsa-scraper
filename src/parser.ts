@@ -448,12 +448,22 @@ function parseCrashTable($: cheerio.CheerioAPI, isUS: boolean): {
   return null;
 }
 
-function isEmptySummary(summary: UsInspectionSummary24Mo | CanadianInspectionSummary24Mo | null): boolean {
-  if (!summary) return true;
-  
-  // Check if any number > 0 exists
-  const json = JSON.stringify(summary);
-  return !/[1-9]/.test(json);
+/**
+ * Recursively check if the object contains ANY number > 0.
+ * Client requirement: only include inspection summary if at least one value is non-zero.
+ */
+function hasNonZeroValue(obj: unknown): boolean {
+  if (obj === null || obj === undefined) return false;
+
+  if (typeof obj === 'number') {
+    return obj > 0;
+  }
+
+  if (typeof obj === 'object') {
+    return Object.values(obj).some((val) => hasNonZeroValue(val));
+  }
+
+  return false;
 }
 
 // --- Main Parser Function ---
@@ -472,7 +482,16 @@ export function parseHtmlToSnapshot(html: string): Snapshot | null {
   const stateCarrierId = extractTableValue($, 'State Carrier ID Number:');
   const mcs150FormDate = parseDate(extractTableValue($, 'MCS-150 Form Date:'));
   const rawAuth = extractTableValue($, 'Operating Authority Status:');
-  const operatingAuthorityStatus = rawAuth ? rawAuth.split('*')[0].trim() : null;
+  let operatingAuthorityStatus: string | null = null;
+  if (rawAuth) {
+    let cleaned = rawAuth
+      .split('*')[0]
+      .replace(/\s+Please Note:.*$/i, '')
+      .replace(/\s+For Licensing and Insurance details click here\.?\s*$/i, '')
+      .replace(/\s+For Licensing.*$/i, '')
+      .trim();
+    operatingAuthorityStatus = cleaned || null;
+  }
 
   // Extract MCS-150 Mileage
   const mileageText = extractTableValue($, 'MCS-150 Mileage');
@@ -548,21 +567,18 @@ export function parseHtmlToSnapshot(html: string): Snapshot | null {
   const carrierOperation = extractCheckedItems($, 'Carrier Operation', CARRIER_OPERATION_MAP);
   const cargoCarried = extractCheckedItems($, 'Cargo Carried', CARGO_MAP);
 
-  // Extract inspection summaries
-  const usInspectionSummary = parseInspectionTable($, 'Inspections/Crashes In US', true) as UsInspectionSummary24Mo | null;
-  const canadianInspectionSummary = parseInspectionTable($, 'Inspections/Crashes In Canada', false) as CanadianInspectionSummary24Mo | null;
+  // Extract inspection summaries (client: only include if at least one value is non-zero)
+  const usSummary = parseInspectionTable($, 'Inspections/Crashes In US', true) as UsInspectionSummary24Mo | null;
+  const canSummary = parseInspectionTable($, 'Inspections/Crashes In Canada', false) as CanadianInspectionSummary24Mo | null;
 
-  // Extract crashes
   const usCrashes = parseCrashTable($, true);
   const canadianCrashes = parseCrashTable($, false);
 
-  // Add crashes to summaries if they exist
-  if (usInspectionSummary && usCrashes) {
-    usInspectionSummary.crashes = usCrashes;
-  }
-  if (canadianInspectionSummary && canadianCrashes) {
-    canadianInspectionSummary.crashes = canadianCrashes;
-  }
+  if (usSummary && usCrashes) usSummary.crashes = usCrashes;
+  if (canSummary && canadianCrashes) canSummary.crashes = canadianCrashes;
+
+  const usInspectionSummary = usSummary && hasNonZeroValue(usSummary) ? usSummary : undefined;
+  const canadianInspectionSummary = canSummary && hasNonZeroValue(canSummary) ? canSummary : undefined;
 
   // Extract safety rating
   let carrierSafetyRating: CarrierSafetyRating | null = null;
@@ -650,8 +666,8 @@ export function parseHtmlToSnapshot(html: string): Snapshot | null {
     operation_classification: operationClassification.length > 0 ? operationClassification : undefined,
     carrier_operation: carrierOperation.length > 0 ? carrierOperation : undefined,
     cargo_carried: cargoCarried.length > 0 ? cargoCarried : undefined,
-    us_inspection_summary_24mo: !isEmptySummary(usInspectionSummary) ? usInspectionSummary : undefined,
-    canadian_inspection_summary_24mo: !isEmptySummary(canadianInspectionSummary) ? canadianInspectionSummary : undefined,
+    us_inspection_summary_24mo: usInspectionSummary,
+    canadian_inspection_summary_24mo: canadianInspectionSummary,
     carrier_safety_rating: carrierSafetyRating || undefined,
   };
 
