@@ -262,8 +262,15 @@ async function main(): Promise<void> {
   }
   console.log('='.repeat(60));
 
-  // Create database pool
-  const pool = new Pool(DB_CONFIG);
+  // Create database pool with optimized settings
+  // For 4 cores: max 20 connections (4 cores * 5), min 5 idle
+  const pool = new Pool({
+    ...DB_CONFIG,
+    max: parseInt(process.env.DB_POOL_MAX || '20', 10),
+    min: parseInt(process.env.DB_POOL_MIN || '5', 10),
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  });
   pool.on('error', (err) => {
     console.error('Unexpected database error:', err);
   });
