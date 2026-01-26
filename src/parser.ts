@@ -269,6 +269,61 @@ function extractCheckedItems<T>(
   return results;
 }
 
+/**
+ * Extract custom/other cargo items (items with X that don't match standard cargo types).
+ * Returns the first custom cargo found, or null if none.
+ */
+function extractCustomCargo($: cheerio.CheerioAPI): string | null {
+  try {
+    // Find the "Cargo Carried:" header
+    let header = $('a').filter((_, el) => {
+      return new RegExp('Cargo Carried', 'i').test($(el).text());
+    }).first();
+
+    if (!header.length) {
+      // Fallback: find text node
+      $('*').each((_, el) => {
+        const text = $(el).text();
+        if (new RegExp('Cargo Carried', 'i').test(text)) {
+          header = $(el);
+          return false; // break
+        }
+      });
+    }
+
+    if (header.length) {
+      // Navigate up to the containing row
+      const headerRow = header.closest('tr');
+      if (headerRow.length) {
+        // The check-box table is usually in the NEXT row
+        const contentRow = headerRow.next('tr');
+        if (contentRow.length) {
+          // Find all 'X' marks within this specific content row
+          const customCargo: string[] = [];
+          contentRow.find('td.queryfield').each((_, cell) => {
+            const cellText = $(cell).text().trim();
+            if (cellText === 'X') {
+              const labelTd = $(cell).next('td');
+              if (labelTd.length) {
+                const label = cleanText(labelTd.text());
+                // If label exists and doesn't match any standard cargo, it's custom
+                if (label && !CARGO_MAP[label]) {
+                  customCargo.push(label);
+                }
+              }
+            }
+          });
+          // Return the first custom cargo found (or null)
+          return customCargo.length > 0 ? customCargo[0] : null;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return null;
+}
+
 // --- Inspection Table Parser ---
 
 function parseInspectionTable(
@@ -566,6 +621,7 @@ export function parseHtmlToSnapshot(html: string): Snapshot | null {
   const operationClassification = extractCheckedItems($, 'Operation Classification', OPERATION_CLASS_MAP);
   const carrierOperation = extractCheckedItems($, 'Carrier Operation', CARRIER_OPERATION_MAP);
   const cargoCarried = extractCheckedItems($, 'Cargo Carried', CARGO_MAP);
+  const cargoCarriedOther = extractCustomCargo($);
 
   // Extract inspection summaries (client: only include if at least one value is non-zero)
   const usSummary = parseInspectionTable($, 'Inspections/Crashes In US', true) as UsInspectionSummary24Mo | null;
@@ -666,6 +722,7 @@ export function parseHtmlToSnapshot(html: string): Snapshot | null {
     operation_classification: operationClassification.length > 0 ? operationClassification : undefined,
     carrier_operation: carrierOperation.length > 0 ? carrierOperation : undefined,
     cargo_carried: cargoCarried.length > 0 ? cargoCarried : undefined,
+    cargo_carried_other: cargoCarriedOther || undefined,
     us_inspection_summary_24mo: usInspectionSummary,
     canadian_inspection_summary_24mo: canadianInspectionSummary,
     carrier_safety_rating: carrierSafetyRating || undefined,

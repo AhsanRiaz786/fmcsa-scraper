@@ -26,7 +26,7 @@ function truncate(s: string | null | undefined, maxLen: number): string | null {
   return t === '' ? null : t.length > maxLen ? t.slice(0, maxLen) : t;
 }
 
-const COLS = 35;
+const COLS = 36;
 
 function recordToValues(record: Snapshot): unknown[] | null {
   const usdot = record.usdot_number != null ? String(record.usdot_number).trim() : '';
@@ -64,6 +64,7 @@ function recordToValues(record: Snapshot): unknown[] | null {
     record.operation_classification ? JSON.stringify(record.operation_classification) : null,
     record.carrier_operation ? JSON.stringify(record.carrier_operation) : null,
     record.cargo_carried ? JSON.stringify(record.cargo_carried) : null,
+    truncate(record.cargo_carried_other, 500),
     record.us_inspection_summary_24mo ? JSON.stringify(record.us_inspection_summary_24mo) : null,
     record.canadian_inspection_summary_24mo ? JSON.stringify(record.canadian_inspection_summary_24mo) : null,
     record.carrier_safety_rating ? JSON.stringify(record.carrier_safety_rating) : null,
@@ -109,7 +110,7 @@ export async function bulkInsertSnapshots(
       physical_address_street, physical_address_city, physical_address_state, physical_address_zip, physical_address_country,
       mailing_address_street, mailing_address_city, mailing_address_state, mailing_address_zip, mailing_address_country,
       phone, duns_number, power_units, non_cmv_units, drivers,
-      operation_classification, carrier_operation, cargo_carried,
+      operation_classification, carrier_operation, cargo_carried, cargo_carried_other,
       us_inspection_summary_24mo, canadian_inspection_summary_24mo, carrier_safety_rating
     ) VALUES ${placeholders.join(', ')}
     ON CONFLICT (usdot_number) DO UPDATE SET
@@ -144,6 +145,7 @@ export async function bulkInsertSnapshots(
       operation_classification = EXCLUDED.operation_classification,
       carrier_operation = EXCLUDED.carrier_operation,
       cargo_carried = EXCLUDED.cargo_carried,
+      cargo_carried_other = EXCLUDED.cargo_carried_other,
       us_inspection_summary_24mo = EXCLUDED.us_inspection_summary_24mo,
       canadian_inspection_summary_24mo = EXCLUDED.canadian_inspection_summary_24mo,
       carrier_safety_rating = EXCLUDED.carrier_safety_rating,

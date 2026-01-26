@@ -80,6 +80,9 @@ export type Snapshot = {
   /** FMCSA: "Cargo Carried" (checked items only) */
   cargo_carried?: CargoCarriedValue[] | null;
 
+  /** FMCSA: "Cargo Carried" custom/other cargo (e.g., "Compost", "Horse Manure") */
+  cargo_carried_other?: string | null;
+
   /**
    * FMCSA: "US Inspection results for 24 months prior to: <date>"
    * Percentages are stored as strings (e.g., "0%") to match the FMCSA display.
