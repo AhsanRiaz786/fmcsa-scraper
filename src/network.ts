@@ -99,11 +99,8 @@ export async function fetchHtml(usdot: string): Promise<string | null> {
             ? 200
             : 2000;
         await new Promise((r) => setTimeout(r, delay));
-      } else {
-        console.log(
-          `[NETWORK] USDOT ${usdot}: ✗ Failed after ${MAX_RETRIES} attempts. Last: ${msg}`
-        );
       }
+      // Only log network failures in test mode (errors are tracked in orchestrator stats)
     }
   }
 

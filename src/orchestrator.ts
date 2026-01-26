@@ -113,10 +113,8 @@ async function dbWriterWorker(pool: Pool): Promise<void> {
     const toInsert = writeBatch.splice(0, writeBatch.length);
     const batchSize = toInsert.length;
     try {
-      console.log(`DB writer: Flushing ${batchSize} records (reason: ${reason})...`);
       const count = await bulkInsertBatch(pool, toInsert);
       stats.saved += count;
-      console.log(`DB writer: ✓ Successfully saved ${count} records to DB (Total saved: ${stats.saved})`);
       lastFlushTime = Date.now();
     } catch (error) {
       console.log(`DB WRITE ERROR: ${error}`);
@@ -198,10 +196,10 @@ async function processUsdot(usdot: string): Promise<void> {
           console.log(`[PARSER] USDOT ${usdot}: Parsed successfully, added to batch (batch size: ${writeBatch.length})`);
         }
         
-        if (stats.scraped % 100 === 0) {
+        if (stats.scraped % 1000 === 0) {
           const processed = stats.scraped + stats.failed;
           console.log(
-            `Milestone: Scraped=${stats.scraped} | Failed=${stats.failed} | Processed=${processed} | Saved=${stats.saved} | Batch=${writeBatch.length} | Last USDOT=${usdot}`
+            `Milestone: Scraped=${stats.scraped} | Failed=${stats.failed} | Processed=${processed} | Saved=${stats.saved} | Batch=${writeBatch.length}`
           );
         }
       } else {
@@ -214,16 +212,16 @@ async function processUsdot(usdot: string): Promise<void> {
       stats.failed += 1;
       if (TEST_MODE && stats.failed <= 5) {
         console.log(`Failed to fetch ${usdot} - no HTML returned`);
-      } else if (stats.failed % 100 === 0) {
-        console.log(`Failed to fetch ${usdot} (Total failed: ${stats.failed})`);
+      } else if (stats.failed % 1000 === 0) {
+        console.log(`Failed to fetch (Total failed: ${stats.failed})`);
       }
     }
   } catch (error) {
     stats.failed += 1;
     stats.errors += 1;
-    console.log(`[ERROR] Error processing ${usdot}: ${error}`);
-    if (error instanceof Error && error.stack) {
-      console.log(`[ERROR] Stack: ${error.stack.split('\n').slice(0, 3).join('\n')}`);
+    // Only log errors in test mode or every 100 errors
+    if (TEST_MODE || stats.errors % 100 === 0) {
+      console.log(`[ERROR] Error processing ${usdot}: ${error}`);
     }
   }
 }
@@ -238,7 +236,7 @@ function startProgressMonitor(): NodeJS.Timeout {
     console.log(
       `${modeIndicator}Progress: Processed=${processed} | Scraped=${stats.scraped} | Failed=${stats.failed} | Saved=${stats.saved} | Errors=${stats.errors}`
     );
-  }, 10000);
+  }, 30000); // Reduced from 10s to 30s
 }
 
 /**
