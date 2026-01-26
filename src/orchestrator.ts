@@ -21,6 +21,7 @@ import {
   PROXY_URL,
   PROXY_USER_BASE,
   PROXY_PASS,
+  PROXY_MAX_CONCURRENCY,
   MAX_RETRIES,
   REQUEST_TIMEOUT,
 } from './config';
@@ -198,8 +199,9 @@ async function processUsdot(usdot: string): Promise<void> {
         }
         
         if (stats.scraped % 100 === 0) {
+          const processed = stats.scraped + stats.failed;
           console.log(
-            `Scraped ${usdot} (Total: ${stats.scraped}, Failed: ${stats.failed}, Saved: ${stats.saved}, Batch: ${writeBatch.length})`
+            `Milestone: Scraped=${stats.scraped} | Failed=${stats.failed} | Processed=${processed} | Saved=${stats.saved} | Batch=${writeBatch.length} | Last USDOT=${usdot}`
           );
         }
       } else {
@@ -232,8 +234,9 @@ async function processUsdot(usdot: string): Promise<void> {
 function startProgressMonitor(): NodeJS.Timeout {
   const modeIndicator = TEST_MODE ? '[TEST MODE] ' : '';
   return setInterval(() => {
+    const processed = stats.scraped + stats.failed;
     console.log(
-      `${modeIndicator}Progress: Scraped=${stats.scraped}, Failed=${stats.failed}, Saved=${stats.saved}, Errors=${stats.errors}`
+      `${modeIndicator}Progress: Processed=${processed} | Scraped=${stats.scraped} | Failed=${stats.failed} | Saved=${stats.saved} | Errors=${stats.errors}`
     );
   }, 10000);
 }
@@ -251,6 +254,7 @@ async function main(): Promise<void> {
   console.log('Network Configuration:');
   console.log(`  Request Timeout: ${REQUEST_TIMEOUT}ms`);
   console.log(`  Max Retries: ${MAX_RETRIES}`);
+  console.log(`  Concurrency: ${CONCURRENCY}${PROXY_URL && !TEST_MODE ? ` (proxy; max ${PROXY_MAX_CONCURRENCY}, set PROXY_MAX_CONCURRENCY to override)` : ''}`);
   console.log(`  Proxy Enabled: ${!TEST_MODE && PROXY_URL && PROXY_USER_BASE && PROXY_PASS ? 'Yes' : 'No'}`);
   if (PROXY_URL) {
     console.log(`  Proxy URL: ${PROXY_URL}`);
@@ -308,10 +312,10 @@ async function main(): Promise<void> {
     await dbWriterPromise;
 
     // 6. Final statistics
+    const finalProcessed = stats.scraped + stats.failed;
     console.log('='.repeat(60));
     console.log('Final Statistics:');
-    console.log(`  Scraped: ${stats.scraped}`);
-    console.log(`  Failed: ${stats.failed}`);
+    console.log(`  Processed: ${finalProcessed} (Scraped: ${stats.scraped}, Failed: ${stats.failed})`);
     console.log(`  Saved to DB: ${stats.saved}`);
     console.log(`  Errors: ${stats.errors}`);
     console.log('='.repeat(60));

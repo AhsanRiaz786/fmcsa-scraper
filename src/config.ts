@@ -35,15 +35,22 @@ export const DATABASE_DSN = DB_NAME && DB_USER && DB_PASSWORD
 export const PROXY_URL = process.env.PROXY_URL;
 export const PROXY_USER_BASE = process.env.PROXY_USER_BASE;
 export const PROXY_PASS = process.env.PROXY_PASS;
+/** Session time in seconds for SOCKS5 sticky IP (e.g. 30). */
+export const PROXY_SESS_TIME = parseInt(process.env.PROXY_SESS_TIME || '30', 10);
+/** Max concurrency when using proxy; cap to avoid ECONNRESET (default 25). */
+export const PROXY_MAX_CONCURRENCY = parseInt(process.env.PROXY_MAX_CONCURRENCY || '25', 10);
 
 // Test mode (disables proxy, uses low concurrency)
 export const TEST_MODE = process.env.TEST_MODE?.toLowerCase() === 'true';
 
 // Performance settings
-// In test mode, force lower concurrency (ignore CONCURRENCY env var)
+const rawConcurrency = parseInt(process.env.CONCURRENCY || '200', 10);
+const useProxy = !TEST_MODE && PROXY_URL && PROXY_USER_BASE && PROXY_PASS;
 export const CONCURRENCY = TEST_MODE
-  ? 1  // Always use 10 in test mode
-  : parseInt(process.env.CONCURRENCY || '200', 10);
+  ? 1
+  : useProxy
+    ? Math.min(rawConcurrency, PROXY_MAX_CONCURRENCY)
+    : rawConcurrency;
 
 export const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '1000', 10);
 export const MAX_RETRIES = parseInt(process.env.MAX_RETRIES || '3', 10);

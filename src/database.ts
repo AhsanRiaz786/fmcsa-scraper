@@ -26,10 +26,54 @@ function truncate(s: string | null | undefined, maxLen: number): string | null {
   return t === '' ? null : t.length > maxLen ? t.slice(0, maxLen) : t;
 }
 
+const COLS = 35;
+
+function recordToValues(record: Snapshot): unknown[] | null {
+  const usdot = record.usdot_number != null ? String(record.usdot_number).trim() : '';
+  if (!usdot) return null;
+  return [
+    truncate(usdot, 50) ?? usdot,
+    truncate(record.entity_type, 50),
+    truncate(record.usdot_status, 50),
+    formatDateForDB(record.out_of_service_date),
+    truncate(record.state_carrier_id_number, 50),
+    formatDateForDB(record.mcs_150_form_date),
+    record.mcs_150_mileage_year ?? null,
+    record.mcs_150_mileage ?? null,
+    record.operating_authority_status ?? null,
+    truncate(record.mc_number, 50),
+    truncate(record.mx_number, 50),
+    truncate(record.ff_number, 50),
+    record.legal_name ?? null,
+    record.dba_name ?? null,
+    record.physical_address?.street ?? null,
+    truncate(record.physical_address?.city, 100),
+    truncate(record.physical_address?.state, 50),
+    truncate(record.physical_address?.zip, 20),
+    truncate(record.physical_address?.country, 50),
+    record.mailing_address?.street ?? null,
+    truncate(record.mailing_address?.city, 100),
+    truncate(record.mailing_address?.state, 50),
+    truncate(record.mailing_address?.zip, 20),
+    truncate(record.mailing_address?.country, 50),
+    truncate(record.phone, 50),
+    truncate(record.duns_number, 50),
+    record.power_units ?? null,
+    record.non_cmv_units ?? null,
+    record.drivers ?? null,
+    record.operation_classification ? JSON.stringify(record.operation_classification) : null,
+    record.carrier_operation ? JSON.stringify(record.carrier_operation) : null,
+    record.cargo_carried ? JSON.stringify(record.cargo_carried) : null,
+    record.us_inspection_summary_24mo ? JSON.stringify(record.us_inspection_summary_24mo) : null,
+    record.canadian_inspection_summary_24mo ? JSON.stringify(record.canadian_inspection_summary_24mo) : null,
+    record.carrier_safety_rating ? JSON.stringify(record.carrier_safety_rating) : null,
+  ];
+}
+
 /**
- * Bulk insert/update snapshots table using individual queries in a transaction.
- * This is simpler and more reliable than building a huge parameterized query.
- * 
+ * Bulk insert/update snapshots table using a single multi-row INSERT.
+ * Much faster than per-row inserts (one round-trip per batch).
+ *
  * @param client - pg PoolClient (from transaction)
  * @param records - List of Snapshot objects
  * @returns Number of records processed
@@ -39,6 +83,22 @@ export async function bulkInsertSnapshots(
   records: Snapshot[]
 ): Promise<number> {
   if (records.length === 0) return 0;
+
+  const rows: unknown[][] = [];
+  for (const r of records) {
+    const v = recordToValues(r);
+    if (v) rows.push(v);
+  }
+  if (rows.length === 0) return 0;
+
+  const flat = rows.flat();
+  const placeholders: string[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const start = i * COLS + 1;
+    placeholders.push(
+      `(${Array.from({ length: COLS }, (_, j) => `$${start + j}`).join(', ')})`
+    );
+  }
 
   const query = `
     INSERT INTO snapshots (
@@ -51,7 +111,7 @@ export async function bulkInsertSnapshots(
       phone, duns_number, power_units, non_cmv_units, drivers,
       operation_classification, carrier_operation, cargo_carried,
       us_inspection_summary_24mo, canadian_inspection_summary_24mo, carrier_safety_rating
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
+    ) VALUES ${placeholders.join(', ')}
     ON CONFLICT (usdot_number) DO UPDATE SET
       entity_type = EXCLUDED.entity_type,
       usdot_status = EXCLUDED.usdot_status,
@@ -90,59 +150,13 @@ export async function bulkInsertSnapshots(
       updated_at = CURRENT_TIMESTAMP
   `;
 
-  let count = 0;
-  for (const record of records) {
-    const usdot = record.usdot_number != null ? String(record.usdot_number).trim() : '';
-    if (!usdot) continue;
-
-    const values = [
-      truncate(usdot, 50) ?? usdot,
-      truncate(record.entity_type, 50),
-      truncate(record.usdot_status, 50),
-      formatDateForDB(record.out_of_service_date),
-      truncate(record.state_carrier_id_number, 50),
-      formatDateForDB(record.mcs_150_form_date),
-      record.mcs_150_mileage_year ?? null,
-      record.mcs_150_mileage ?? null,
-      record.operating_authority_status ?? null,
-      truncate(record.mc_number, 50),
-      truncate(record.mx_number, 50),
-      truncate(record.ff_number, 50),
-      record.legal_name ?? null,
-      record.dba_name ?? null,
-      record.physical_address?.street ?? null,
-      truncate(record.physical_address?.city, 100),
-      truncate(record.physical_address?.state, 50),
-      truncate(record.physical_address?.zip, 20),
-      truncate(record.physical_address?.country, 50),
-      record.mailing_address?.street ?? null,
-      truncate(record.mailing_address?.city, 100),
-      truncate(record.mailing_address?.state, 50),
-      truncate(record.mailing_address?.zip, 20),
-      truncate(record.mailing_address?.country, 50),
-      truncate(record.phone, 50),
-      truncate(record.duns_number, 50),
-      record.power_units ?? null,
-      record.non_cmv_units ?? null,
-      record.drivers ?? null,
-      record.operation_classification ? JSON.stringify(record.operation_classification) : null,
-      record.carrier_operation ? JSON.stringify(record.carrier_operation) : null,
-      record.cargo_carried ? JSON.stringify(record.cargo_carried) : null,
-      record.us_inspection_summary_24mo ? JSON.stringify(record.us_inspection_summary_24mo) : null,
-      record.canadian_inspection_summary_24mo ? JSON.stringify(record.canadian_inspection_summary_24mo) : null,
-      record.carrier_safety_rating ? JSON.stringify(record.carrier_safety_rating) : null,
-    ];
-
-    try {
-      await client.query(query, values);
-      count++;
-    } catch (error) {
-      console.log(`Error inserting record ${usdot}: ${error}`);
-      throw error; // Abort batch: rollback, do not count partial
-    }
+  try {
+    await client.query(query, flat);
+    return rows.length;
+  } catch (error) {
+    console.log(`Error inserting batch (${rows.length} records): ${error}`);
+    throw error;
   }
-
-  return count;
 }
 
 /**
