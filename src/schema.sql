@@ -6,13 +6,13 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Main snapshots table (flattened structure matching TypeScript types)
 CREATE TABLE snapshots (
-  usdot_number VARCHAR(50) PRIMARY KEY,
+  usdot_number VARCHAR(100) PRIMARY KEY,
   
   -- Basic info
-  entity_type VARCHAR(50),
-  usdot_status VARCHAR(50),
+  entity_type VARCHAR(100),
+  usdot_status VARCHAR(100),
   out_of_service_date DATE,
-  state_carrier_id_number VARCHAR(50),
+  state_carrier_id_number VARCHAR(100),
   
   -- MCS-150 data
   mcs_150_form_date DATE,
@@ -21,9 +21,9 @@ CREATE TABLE snapshots (
   
   -- Operating authority
   operating_authority_status TEXT,
-  mc_number VARCHAR(50),
-  mx_number VARCHAR(50),
-  ff_number VARCHAR(50),
+  mc_number VARCHAR(100),
+  mx_number VARCHAR(100),
+  ff_number VARCHAR(100),
   
   -- Company info
   legal_name TEXT,
@@ -32,20 +32,20 @@ CREATE TABLE snapshots (
   -- Physical address (flattened)
   physical_address_street TEXT,
   physical_address_city VARCHAR(100),
-  physical_address_state VARCHAR(50),
-  physical_address_zip VARCHAR(20),
-  physical_address_country VARCHAR(50) DEFAULT 'US',
+  physical_address_state VARCHAR(100),
+  physical_address_zip VARCHAR(100),
+  physical_address_country VARCHAR(100) DEFAULT 'US',
   
   -- Mailing address (flattened)
   mailing_address_street TEXT,
   mailing_address_city VARCHAR(100),
-  mailing_address_state VARCHAR(50),
-  mailing_address_zip VARCHAR(20),
-  mailing_address_country VARCHAR(50) DEFAULT 'US',
+  mailing_address_state VARCHAR(100),
+  mailing_address_zip VARCHAR(100),
+  mailing_address_country VARCHAR(100) DEFAULT 'US',
   
   -- Contact
-  phone VARCHAR(50),
-  duns_number VARCHAR(50),
+  phone VARCHAR(100),
+  duns_number VARCHAR(100),
   
   -- Fleet size
   power_units INTEGER,
@@ -56,6 +56,7 @@ CREATE TABLE snapshots (
   operation_classification JSONB,
   carrier_operation JSONB,
   cargo_carried JSONB,
+  cargo_carried_other TEXT,
   us_inspection_summary_24mo JSONB,
   canadian_inspection_summary_24mo JSONB,
   carrier_safety_rating JSONB,
