@@ -100,7 +100,12 @@ export async function fetchHtml(usdot: string): Promise<string | null> {
             : 2000;
         await new Promise((r) => setTimeout(r, delay));
       }
-      // Only log network failures in test mode (errors are tracked in orchestrator stats)
+      // Log network failures on the final attempt so we can see all hard fails
+      if (isLast) {
+        console.log(
+          `[NETWORK FAIL] USDOT ${usdot}: Failed after ${MAX_RETRIES} attempts. Last error: ${msg}`
+        );
+      }
     }
   }
 

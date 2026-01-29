@@ -204,24 +204,20 @@ async function processUsdot(usdot: string): Promise<void> {
         }
       } else {
         stats.failed += 1;
-        if (TEST_MODE) {
-          console.log(`[PARSER] USDOT ${usdot}: Failed to parse - snapshot is null or missing usdot_number`);
-        }
+        console.log(
+          `[PARSER FAIL] USDOT ${usdot}: snapshot is null or missing usdot_number (failed=${stats.failed})`
+        );
       }
     } else {
       stats.failed += 1;
-      if (TEST_MODE && stats.failed <= 5) {
-        console.log(`Failed to fetch ${usdot} - no HTML returned`);
-      } else if (stats.failed % 1000 === 0) {
-        console.log(`Failed to fetch (Total failed: ${stats.failed})`);
-      }
+      console.log(`[FETCH FAIL] USDOT ${usdot}: no HTML returned (failed=${stats.failed})`);
     }
   } catch (error) {
     stats.failed += 1;
     stats.errors += 1;
-    // Only log errors in test mode or every 100 errors
-    if (TEST_MODE || stats.errors % 100 === 0) {
-      console.log(`[ERROR] Error processing ${usdot}: ${error}`);
+    console.log(`[ERROR] Error processing ${usdot}: ${error}`);
+    if (error instanceof Error && error.stack) {
+      console.log(`[ERROR STACK] ${error.stack.split('\n').slice(0, 3).join('\n')}`);
     }
   }
 }
